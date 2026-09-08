@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { PYTHON_CORE_SCRIPT, CLI_ASK_SCRIPT, INGEST_MANUALS_SCRIPT } from "./src/data/deploymentFiles";
 
@@ -418,6 +417,7 @@ ${prompt}
 // Vite or Static file serving
 async function setupServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

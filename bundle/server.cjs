@@ -25,7 +25,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
-var import_vite = require("vite");
 var import_genai = require("@google/genai");
 
 // src/data/deploymentFiles.ts
@@ -2958,7 +2957,8 @@ ${prompt}
 });
 async function setupServer() {
   if (process.env.NODE_ENV !== "production") {
-    const vite = await (0, import_vite.createServer)({
+    const { createServer: createViteServer } = await import("vite");
+    const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa"
     });
