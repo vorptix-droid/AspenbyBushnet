@@ -9,15 +9,21 @@ app.use(express.json());
 
 const PORT = 3000;
 
-// Initialize Gemini Client server-side
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// Lazy initialization of Gemini Client
+let aiClient: GoogleGenAI | null = null;
+function getAI(): GoogleGenAI | null {
+  if (!aiClient && process.env.GEMINI_API_KEY) {
+    aiClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return aiClient;
+}
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
@@ -350,17 +356,27 @@ ${prompt}
 [ASPEN SURVIVAL RESPONSE]:
 `;
 
-    // Query Gemini API as the simulated Qwen engine server-side
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: fullPromptWithContext,
-      config: {
-        systemInstruction: systemInstruction,
-        temperature: selectedModel === "qwen-1.5b" ? 0.4 : 0.2,
-      },
-    });
+    const aiInstance = getAI();
+    let fullText = "";
 
-    const fullText = response.text || "ASPEN: System ready. Telemetry nominal.";
+    if (aiInstance) {
+      // Query Gemini API as the simulated Qwen engine server-side
+      const response = await aiInstance.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: fullPromptWithContext,
+        config: {
+          systemInstruction: systemInstruction,
+          temperature: selectedModel === "qwen-1.5b" ? 0.4 : 0.2,
+        },
+      });
+      fullText = response.text || "ASPEN: System ready. Telemetry nominal.";
+    } else {
+      // Offline fallback when no cloud API key is configured on local Pi
+      const bestMatch = matchedRagChunks[0];
+      fullText = bestMatch
+        ? `[ASPEN OFFLINE LOCAL DIRECTIVE]\nReference: ${bestMatch.title} (${bestMatch.source})\n\n${bestMatch.content}\n\n[Status: BushNet Core running local offline guidance]`
+        : `[ASPEN LOCAL ENGINE]: Telemetry nominal. Sensors online. Ready for command.`;
+    }
 
     // Extract 16x2 LCD lines if present, or format default
     let lcdLine1 = "ASPEN ONLINE";
@@ -416,21 +432,30 @@ ${prompt}
 
 // Vite or Static file serving
 async function setupServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = fs.existsSync(path.join(process.cwd(), "bundle"))
-      ? path.join(process.cwd(), "bundle")
-      : path.join(process.cwd(), "dist");
+  const distPath = fs.existsSync(path.join(process.cwd(), "bundle"))
+    ? path.join(process.cwd(), "bundle")
+    : path.join(process.cwd(), "dist");
+
+  // If a pre-built static bundle exists or we are in production, serve directly (zero dev dependencies needed)
+  if (fs.existsSync(path.join(distPath, "index.html")) || process.env.NODE_ENV === "production") {
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
+  } else {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   }
 
   app.listen(PORT, "0.0.0.0", () => {

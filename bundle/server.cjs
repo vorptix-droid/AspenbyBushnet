@@ -2594,14 +2594,20 @@ var DEPLOYMENT_FILES_LIST = [
 var app = (0, import_express.default)();
 app.use(import_express.default.json());
 var PORT = 3e3;
-var ai = new import_genai.GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build"
-    }
+var aiClient = null;
+function getAI() {
+  if (!aiClient && process.env.GEMINI_API_KEY) {
+    aiClient = new import_genai.GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build"
+        }
+      }
+    });
   }
-});
+  return aiClient;
+}
 app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
@@ -2900,15 +2906,27 @@ ${prompt}
 
 [ASPEN SURVIVAL RESPONSE]:
 `;
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: fullPromptWithContext,
-      config: {
-        systemInstruction,
-        temperature: selectedModel === "qwen-1.5b" ? 0.4 : 0.2
-      }
-    });
-    const fullText = response.text || "ASPEN: System ready. Telemetry nominal.";
+    const aiInstance = getAI();
+    let fullText = "";
+    if (aiInstance) {
+      const response = await aiInstance.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: fullPromptWithContext,
+        config: {
+          systemInstruction,
+          temperature: selectedModel === "qwen-1.5b" ? 0.4 : 0.2
+        }
+      });
+      fullText = response.text || "ASPEN: System ready. Telemetry nominal.";
+    } else {
+      const bestMatch = matchedRagChunks[0];
+      fullText = bestMatch ? `[ASPEN OFFLINE LOCAL DIRECTIVE]
+Reference: ${bestMatch.title} (${bestMatch.source})
+
+${bestMatch.content}
+
+[Status: BushNet Core running local offline guidance]` : `[ASPEN LOCAL ENGINE]: Telemetry nominal. Sensors online. Ready for command.`;
+    }
     let lcdLine1 = "ASPEN ONLINE";
     let lcdLine2 = activeEmergency ? "EMERGENCY SOS!" : `P:${sensors.bmpPressure || 1013} T:${sensors.dhtTemp || 21}C`;
     const lcdMatch = fullText.match(/```lcd\nLINE1:\s*(.*?)\nLINE2:\s*(.*?)\n```/i);
@@ -2956,19 +2974,26 @@ ${prompt}
   }
 });
 async function setupServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = import_fs.default.existsSync(import_path.default.join(process.cwd(), "bundle")) ? import_path.default.join(process.cwd(), "bundle") : import_path.default.join(process.cwd(), "dist");
+  const distPath = import_fs.default.existsSync(import_path.default.join(process.cwd(), "bundle")) ? import_path.default.join(process.cwd(), "bundle") : import_path.default.join(process.cwd(), "dist");
+  if (import_fs.default.existsSync(import_path.default.join(distPath, "index.html")) || process.env.NODE_ENV === "production") {
     app.use(import_express.default.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(import_path.default.join(distPath, "index.html"));
     });
+  } else {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa"
+      });
+      app.use(vite.middlewares);
+    } catch {
+      app.use(import_express.default.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(import_path.default.join(distPath, "index.html"));
+      });
+    }
   }
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BushNet ASPEN] Server running on http://0.0.0.0:${PORT}`);
